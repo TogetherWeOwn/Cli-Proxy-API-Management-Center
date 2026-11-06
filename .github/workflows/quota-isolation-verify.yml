@@ -20,8 +20,6 @@ jobs:
     env:
       CI: 'true'
       EXPECTED_CANDIDATE: 6298a44ae637cca5284a4a7d8a9148b213c8ceb0
-      EVIDENCE_DIR: ${{ runner.temp }}/quota-isolation-evidence
-      BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/quota-isolation-bun-cache
 
     steps:
       - name: Checkout exact test candidate
@@ -44,8 +42,12 @@ jobs:
 
       - name: Assert immutable clean source and record binding
         id: identity
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/quota-isolation-evidence
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/quota-isolation-bun-cache
         run: |
           set -euo pipefail
+          printf 'EVIDENCE_DIR=%s\nBUN_INSTALL_CACHE_DIR=%s\n' "$EVIDENCE_DIR" "$BUN_INSTALL_CACHE_DIR" >> "$GITHUB_ENV"
           mkdir -p "$EVIDENCE_DIR"
           test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE"
           test -z "$(git status --porcelain --untracked-files=all)"
