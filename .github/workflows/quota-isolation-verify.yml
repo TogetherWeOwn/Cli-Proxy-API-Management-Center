@@ -1,0 +1,160 @@
+name: Quota isolation regression evidence
+
+on:
+  push:
+    branches:
+      - 'ci/quota-isolation-verify-*'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    if: github.repository == 'TogetherWeOwn/Cli-Proxy-API-Management-Center'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    env:
+      CI: 'true'
+      EXPECTED_CANDIDATE: 6298a44ae637cca5284a4a7d8a9148b213c8ceb0
+      EVIDENCE_DIR: ${{ runner.temp }}/quota-isolation-evidence
+      BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/quota-isolation-bun-cache
+
+    steps:
+      - name: Checkout exact test candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: TogetherWeOwn/Cli-Proxy-API-Management-Center
+          ref: 6298a44ae637cca5284a4a7d8a9148b213c8ceb0
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Checkout controller for evidence only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: TogetherWeOwn/Cli-Proxy-API-Management-Center
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Assert immutable clean source and record binding
+        id: identity
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test "$(git remote get-url origin)" = 'https://github.com/TogetherWeOwn/Cli-Proxy-API-Management-Center'
+          test -z "$(git config --local --get-regexp 'http\..*\.extraheader' || true)"
+          test "$(git -C ../controller rev-parse HEAD)" = "$GITHUB_SHA"
+          sha256sum package.json bun.lock .github/workflows/ci.yml tests/pluginListConnection.test.ts > "$EVIDENCE_DIR/source-digests-before.txt"
+          sha256sum ../controller/.github/workflows/quota-isolation-verify.yml > "$EVIDENCE_DIR/controller-workflow-digest.txt"
+          python3 -I - <<'PYTHON'
+          import json, os, pathlib, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          manifest = {
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'controller_head_sha': os.environ['GITHUB_SHA'],
+              'tested_candidate_sha': git('rev-parse', 'HEAD'),
+              'tested_candidate_tree': git('rev-parse', 'HEAD^{tree}'),
+              'expected_candidate_sha': os.environ['EXPECTED_CANDIDATE'],
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'workflow_ref': os.environ['GITHUB_WORKFLOW_REF'],
+              'source_clean_before_execution': True,
+              'commands': [
+                  'bun install --frozen-lockfile --ignore-scripts --minimum-release-age 259200',
+                  'bun test tests/pluginListConnection.test.ts',
+              ],
+              'limitations': [
+                  'Actions head_sha is controller W, not tested candidate T.',
+                  'Existing lock entries bypass new-resolution age filtering; missing timestamps pass.',
+                  '72 existing lock entries have no integrity field; no digest assurance for those entries.',
+                  'No upstream required-check association or waiver is claimed.',
+              ],
+          }
+          target = pathlib.Path(os.environ['EVIDENCE_DIR']) / 'manifest.json'
+          target.write_text(json.dumps(manifest, indent=2) + '\n')
+          PYTHON
+
+      - name: Setup Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+
+      - name: Setup Bun 1.4.3 without cache
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.3'
+          no-cache: true
+
+      - name: Verify tool versions and discover native refusal controls
+        run: |
+          set -euo pipefail
+          test "$(bun --version)" = '1.4.3'
+          test "$(node -p 'process.versions.node.split(".")[0]')" = '24'
+          { node --version; bun --version; sha256sum "$(command -v bun)"; } | tee "$EVIDENCE_DIR/tool-versions.txt"
+          bun install --help > "$EVIDENCE_DIR/bun-install-help.txt"
+          grep -F -- '--ignore-scripts' "$EVIDENCE_DIR/bun-install-help.txt"
+          grep -F -- '--minimum-release-age' "$EVIDENCE_DIR/bun-install-help.txt"
+          test ! -e node_modules
+
+      - name: Clean frozen installation with lifecycle scripts refused
+        id: install
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts --minimum-release-age 259200 2>&1 | tee "$EVIDENCE_DIR/install.log"
+
+      - name: Run deferred Axios regression before repair
+        id: regression
+        run: |
+          set -euo pipefail
+          bun test tests/pluginListConnection.test.ts 2>&1 | tee "$EVIDENCE_DIR/regression.log"
+
+      - name: Assert source unchanged and finalize evidence
+        if: always()
+        env:
+          IDENTITY_OUTCOME: ${{ steps.identity.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          REGRESSION_OUTCOME: ${{ steps.regression.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          python3 -I - <<'PYTHON'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['EVIDENCE_DIR'])
+          target = root / 'manifest.json'
+          manifest = json.loads(target.read_text()) if target.exists() else {}
+          clean = subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--']).returncode == 0
+          untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], text=True)
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          manifest.update({
+              'identity_outcome': os.environ['IDENTITY_OUTCOME'],
+              'install_outcome': os.environ['INSTALL_OUTCOME'],
+              'regression_outcome': os.environ['REGRESSION_OUTCOME'],
+              'tracked_source_unchanged_after_execution': clean,
+              'unexpected_untracked_source_after_execution': untracked.splitlines(),
+              'head_after_execution': head,
+          })
+          target.write_text(json.dumps(manifest, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Controller / tested-source binding\n\n```json\n' + json.dumps(manifest, indent=2) + '\n```\n')
+          assert clean and not untracked and head == os.environ['EXPECTED_CANDIDATE']
+          PYTHON
+          sha256sum package.json bun.lock .github/workflows/ci.yml tests/pluginListConnection.test.ts > "$EVIDENCE_DIR/source-digests-after.txt"
+          diff -u "$EVIDENCE_DIR/source-digests-before.txt" "$EVIDENCE_DIR/source-digests-after.txt"
+
+      - name: Retain complete regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: quota-isolation-red-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/quota-isolation-evidence
+          if-no-files-found: error
+          retention-days: 14
