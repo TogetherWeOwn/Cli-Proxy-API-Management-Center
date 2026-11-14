@@ -1,0 +1,41 @@
+# Highest changed-path tier wins, including both sides of a rename; sensitive
+# wins overlaps. Unmatched and new paths are sensitive. This map is sensitive.
+#
+# Content escalates regardless of path: endpoints or input parsing; auth,
+# sessions, crypto, keys, secrets, credentials or permissions; tenant or
+# personal data; SQL, schema or migrations; dependencies or lockfiles including
+# dev dependencies; CI or workflows; weakened or deleted tests/assertions or
+# lower gates. Prose and test names do not exempt these changes.
+# Low tests, if added later, are additive-only. Sensitive-floor downgrades
+# require explicit Security approval.
+version: 1
+default_tier: sensitive
+
+tiers:
+  # The license is static prose; content triggers still apply.
+  low:
+    - LICENSE
+  # No runtime modules have been independently qualified for ordinary review.
+  ordinary: []
+  sensitive:
+    - .github/**
+    - CODEOWNERS
+    - '**/CODEOWNERS'
+    - AGENTS.md
+    - CLAUDE.md
+    - '**/AGENTS.md'
+    - '**/CLAUDE.md'
+    - '**/SKILL.md'
+    - .claude/**
+    - '**/.claude/**'
+    - skills/**
+    - '**/skills/**'
+    - src/**
+    - tests/**
+    - package.json
+    - bun.lock
+    - eslint.config.js
+    - tsconfig.json
+    - tsconfig.node.json
+    - vite.config.ts
+    - index.html
