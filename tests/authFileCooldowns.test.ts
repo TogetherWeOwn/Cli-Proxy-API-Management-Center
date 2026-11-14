@@ -225,7 +225,13 @@ describe('cooldown section rendering', () => {
 
     const available = render(snapshot, { onReset: () => {} });
     expect(available).toContain(i18n.t('auth_files.cooldown_reset_button'));
-    expect(available).toContain(i18n.t('auth_files.cooldown_reset_hint'));
+    const hint = i18n.t('auth_files.cooldown_reset_hint');
+    const escapedHint = renderToStaticMarkup(createElement('span', { title: hint }));
+    expect(available).toContain(escapedHint.match(/title="[^"]*"/)![0]);
+    const englishHint = i18n.getFixedT('en')('auth_files.cooldown_reset_hint');
+    expect(renderToStaticMarkup(createElement('span', { title: englishHint }))).toContain(
+      'title="Clear this credential&#x27;s local routing cooldown"'
+    );
     expect(available).not.toContain('disabled=""');
 
     const pending = render(snapshot, { onReset: () => {}, resetting: true });
